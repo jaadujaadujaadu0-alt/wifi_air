@@ -1,7 +1,9 @@
 import string
 import itertools
 import os
-from typing import List, Optional
+from typing import List
+from functools import reduce
+import operator
 
 LETTERS_LOWER = string.ascii_lowercase
 LETTERS_UPPER = string.ascii_uppercase
@@ -19,7 +21,8 @@ def parse_mask(mask: str) -> List[str]:
 
 def count_total(mask: str) -> int:
     charsets = parse_mask(mask)
-    return int(itertools.prod(len(cs) for cs in charsets))
+    # Fixed: Use reduce instead of itertools.prod
+    return reduce(operator.mul, (len(cs) for cs in charsets), 1)
 
 def generate_part(mask: str, part: int, total_parts: int, output_file: str, chunk_size=100000):
     charsets = parse_mask(mask)
