@@ -1,24 +1,44 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 import os
 import subprocess
+import threading
 from generator import generate_part, count_total
 
 app = FastAPI(title="Railway Wordlist Generator")
 
 class GenerateRequest(BaseModel):
-    mask: str                    # e.g. "ccccdddd", "Ccccsdddd"
+    mask: str
     part: int = 1
     total_parts: int = 1
     filename: str = "wordlist.txt"
 
 class AttackRequest(BaseModel):
-    wordlist: str = "wordlist.txt"
+    wordlist: str = "part1.txt"
     capture: str = "capture.pcap"
+
+# Background attack function
+def run_aircrack(wordlist: str, capture: str):
+    wordlist_path = f"wordlists/{wordlist}" if not wordlist.startswith('/') else wordlist
+    output_file = "cracked.txt"
+    
+    print(f"🚀 Starting background aircrack-ng attack with {wordlist}")
+    
+    try:
+        cmd = f"aircrack-ng -w {wordlist_path} {capture} -l {output_file}"
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=3600)  # 1 hour max
+        
+        with open(output_file, "a") as f:
+            f.write("\n--- Aircrack finished ---\n")
+            f.write(result.stdout)
+        
+        print("✅ Aircrack-ng background task completed!")
+    except Exception as e:
+        print(f"❌ Attack error: {e}")
 
 @app.get("/")
 def home():
-    return {"status": "running", "message": "Wordlist Generator + Aircrack API"}
+    return {"status": "running"}
 
 @app.post("/generate")
 def generate_wordlist(req: GenerateRequest):
@@ -26,7 +46,7 @@ def generate_wordlist(req: GenerateRequest):
         total = count_total(req.mask)
         output_path = f"wordlists/{req.filename}"
         
-        print(f"Generating mask: {req.mask} | Part: {req.part}/{req.total_parts} | Total: {total:,}")
+        print(f"Generating {req.mask} | Part {req.part}/{req.total_parts}")
         
         generated = generate_part(
             mask=req.mask,
@@ -37,40 +57,27 @@ def generate_wordlist(req: GenerateRequest):
         
         return {
             "status": "success",
-            "mask": req.mask,
-            "part": req.part,
-            "total_parts": req.total_parts,
-            "generated": generated,
             "file": output_path,
-            "total_possible": total
+            "generated": generated,
+            "total": total
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(500, str(e))
 
 @app.post("/attack")
-def start_attack(req: AttackRequest):
-    wordlist_path = f"wordlists/{req.wordlist}" if not req.wordlist.startswith('/') else req.wordlist
-    capture_path = req.capture
-
+def start_attack(req: AttackRequest, background_tasks: BackgroundTasks):
+    wordlist_path = f"wordlists/{req.wordlist}"
+    
     if not os.path.exists(wordlist_path):
-        raise HTTPException(status_code=404, detail=f"Wordlist not found: {wordlist_path}")
-    if not os.path.exists(capture_path):
-        raise HTTPException(status_code=404, detail=f"Capture file not found: {capture_path}")
+        raise HTTPException(404, f"Wordlist not found: {req.wordlist}")
+    if not os.path.exists(req.capture):
+        raise HTTPException(404, f"Capture not found: {req.capture}")
 
-    try:
-        output_file = "cracked.txt"
-        cmd = f"aircrack-ng -w {wordlist_path} {capture_path} -l {output_file}"
-        
-        print("Starting aircrack-ng attack...")
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-        
-        with open(output_file, "r") as f:
-            cracked = f.read().strip()
-        
-        return {
-            "status": "completed",
-            "cracked_password": cracked if cracked else "Not found",
-            "aircrack_output": result.stdout[-500:]  # last 500 chars
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    # Add to background
+    background_tasks.add_task(run_aircrack, req.wordlist, req.capture)
+    
+    return {
+        "status": "attack_started_in_background",
+        "message": f"Attack started with {req.wordlist}. Check Railway logs for progress.",
+        "output_file": "cracked.txt"
+    }
