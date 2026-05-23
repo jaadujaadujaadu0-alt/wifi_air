@@ -1,1 +1,2 @@
-psutil
+fastapi
+uvicorn[standard]
