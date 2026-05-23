@@ -3,66 +3,53 @@ from pydantic import BaseModel
 import os
 import subprocess
 import threading
-from generator import generate_part, count_total
 
-app = FastAPI(title="Railway Wordlist Generator")
-
-class GenerateRequest(BaseModel):
-    mask: str
-    part: int = 1
-    total_parts: int = 1
-    filename: str = "wordlist.txt"
+app = FastAPI(title="WiFi Air Cracker")
 
 class AttackRequest(BaseModel):
     wordlist: str = "part1.txt"
     capture: str = "capture.pcap"
 
-# Background attack function
-def run_aircrack(wordlist: str, capture: str):
-    wordlist_path = f"wordlists/{wordlist}" if not wordlist.startswith('/') else wordlist
+def run_aircrack_live(wordlist: str, capture: str):
+    wordlist_path = f"wordlists/{wordlist}"
     output_file = "cracked.txt"
     
-    print(f"🚀 Starting background aircrack-ng attack with {wordlist}")
+    print(f"🚀 Starting aircrack-ng attack with: {wordlist}")
+    print(f"Wordlist size: {os.path.getsize(wordlist_path) / (1024*1024*1024):.2f} GB")
     
     try:
-        cmd = f"aircrack-ng -w {wordlist_path} {capture} -l {output_file}"
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=3600)  # 1 hour max
+        cmd = [
+            "aircrack-ng", 
+            "-w", wordlist_path, 
+            capture, 
+            "-l", output_file
+        ]
         
-        with open(output_file, "a") as f:
-            f.write("\n--- Aircrack finished ---\n")
-            f.write(result.stdout)
-        
-        print("✅ Aircrack-ng background task completed!")
-    except Exception as e:
-        print(f"❌ Attack error: {e}")
-
-@app.get("/")
-def home():
-    return {"status": "running"}
-
-@app.post("/generate")
-def generate_wordlist(req: GenerateRequest):
-    try:
-        total = count_total(req.mask)
-        output_path = f"wordlists/{req.filename}"
-        
-        print(f"Generating {req.mask} | Part {req.part}/{req.total_parts}")
-        
-        generated = generate_part(
-            mask=req.mask,
-            part=req.part,
-            total_parts=req.total_parts,
-            output_file=output_path
+        # Run with real-time output
+        process = subprocess.Popen(
+            cmd, 
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            universal_newlines=True
         )
         
-        return {
-            "status": "success",
-            "file": output_path,
-            "generated": generated,
-            "total": total
-        }
+        print("🔴 Aircrack-ng is running... (Live logs below)")
+        
+        for line in process.stdout:
+            line = line.strip()
+            if line:
+                print(line)           # This will show in Railway logs
+                # Optional: Save important lines
+                if "KEY FOUND" in line or "cracked" in line.lower():
+                    print(f"🎉 POSSIBLE PASSWORD FOUND: {line}")
+        
+        process.wait()
+        print("✅ Aircrack-ng process finished.")
+        
     except Exception as e:
-        raise HTTPException(500, str(e))
+        print(f"❌ Error running aircrack: {e}")
 
 @app.post("/attack")
 def start_attack(req: AttackRequest, background_tasks: BackgroundTasks):
@@ -73,11 +60,17 @@ def start_attack(req: AttackRequest, background_tasks: BackgroundTasks):
     if not os.path.exists(req.capture):
         raise HTTPException(404, f"Capture not found: {req.capture}")
 
-    # Add to background
-    background_tasks.add_task(run_aircrack, req.wordlist, req.capture)
+    background_tasks.add_task(run_aircrack_live, req.wordlist, req.capture)
     
     return {
-        "status": "attack_started_in_background",
-        "message": f"Attack started with {req.wordlist}. Check Railway logs for progress.",
-        "output_file": "cracked.txt"
+        "status": "attack_started",
+        "message": "Live logs will appear in Railway. Check logs now."
+    }
+
+@app.get("/status")
+def get_status():
+    return {
+        "wordlists_available": os.listdir("wordlists") if os.path.exists("wordlists") else [],
+        "cracked_file_exists": os.path.exists("cracked.txt"),
+        "message": "Check Railway live logs for aircrack progress"
     }
